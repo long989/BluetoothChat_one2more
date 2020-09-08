@@ -14,25 +14,20 @@
  * limitations under the License.
  */
 
-package com.example.bluetoothchatclient;
+package com.example.bluetoothserver;
 
-import android.Manifest;
 import android.app.ActionBar;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
-import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentActivity;
-import android.support.v4.content.ContextCompat;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -42,6 +37,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ListView;
@@ -49,16 +45,19 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.alibaba.fastjson.JSON;
+import com.example.bluetoothchatclient.R;
 import com.example.bluetoothchatcore.Constants;
 import com.example.bluetoothchatcore.ConversationArrayAdapter;
 import com.example.bluetoothchatcore.MessageBean;
+import com.example.event.ClientMessageEvent;
+import com.example.event.ServerMessageEvent;
 
 import java.util.ArrayList;
 
 /**
  * This fragment controls Bluetooth to communicate with other devices.
  */
-public class BluetoothChatFragment extends Fragment {
+public class BluetoothChatServerFragment extends Fragment {
 
     private static final String TAG = "BluetoothChatFragment";
 
@@ -66,7 +65,6 @@ public class BluetoothChatFragment extends Fragment {
     private static final int REQUEST_CONNECT_DEVICE_SECURE = 1;
     private static final int REQUEST_CONNECT_DEVICE_INSECURE = 2;
     private static final int REQUEST_ENABLE_BT = 3;
-    private static final int REQUEST_LOCATION_PERMISSION_CODE = 4;
 
     // Layout Views
     private ListView mConversationView;
@@ -77,6 +75,10 @@ public class BluetoothChatFragment extends Fragment {
      * Name of the connected device
      */
     private String mConnectedDeviceName = null;
+    /**
+     * 当前选择进行私聊的客户端蓝牙地址
+     */
+    private String mChatClientAddress = null;
 
     /**
      * Array adapter for the conversation thread
@@ -96,7 +98,8 @@ public class BluetoothChatFragment extends Fragment {
     /**
      * Member object for the chat services
      */
-    private BluetoothChatClientService mChatService = null;
+    private BluetoothChatServerService mChatService = null;
+    private Button mDiscoverable;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -155,14 +158,33 @@ public class BluetoothChatFragment extends Fragment {
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_bluetooth_chat, container, false);
+        return inflater.inflate(R.layout.fragment_bluetooth_server_chat, container, false);
     }
 
     @Override
     public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
         mConversationView = (ListView) view.findViewById(R.id.in);
+        mConversationView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                MessageBean messageBean = mConversationArrayAdapter.getItem(position);
+                if (TextUtils.equals(getLocalBlueDeviceAddress(), messageBean.getDeviceAddress())) {
+                    Toast.makeText(getContext(), "不能和自己聊天", Toast.LENGTH_SHORT).show();
+                } else {
+                    mChatClientAddress = messageBean.getDeviceAddress();
+                    Toast.makeText(getContext(), String.format("选择和%s聊天", messageBean.getDeviceName()), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
         mOutEditText = (EditText) view.findViewById(R.id.edit_text_out);
         mSendButton = (Button) view.findViewById(R.id.button_send);
+        mDiscoverable = (Button) view.findViewById(R.id.discoverable);
+        mDiscoverable.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ensureDiscoverable();
+            }
+        });
     }
 
     /**
@@ -192,8 +214,8 @@ public class BluetoothChatFragment extends Fragment {
             }
         });
 
-        // Initialize the BluetoothChatClientService to perform bluetooth connections
-        mChatService = new BluetoothChatClientService(getActivity(), mHandler);
+        // Initialize the BluetoothChatServerService to perform bluetooth connections
+        mChatService = new BluetoothChatServerService(getActivity(), mHandler);
 
         // Initialize the buffer for outgoing messages
         mOutStringBuffer = new StringBuffer("");
@@ -208,6 +230,8 @@ public class BluetoothChatFragment extends Fragment {
             Intent discoverableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
             discoverableIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
             startActivity(discoverableIntent);
+        } else {
+            Toast.makeText(getActivity(), R.string.blue_is_discoverable, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -225,9 +249,20 @@ public class BluetoothChatFragment extends Fragment {
 
         // Check that there's actually something to send
         if (message.length() > 0) {
-            // Get the message bytes and tell the BluetoothChatClientService to write
-            byte[] send = message.getBytes();
-            mChatService.write(send);
+            // Get the message bytes and tell the BluetoothChatServerService to write
+            MessageBean messageBean = new MessageBean();
+            messageBean.setDeviceAddress(getLocalBlueDeviceAddress());
+            messageBean.setDeviceName(mBluetoothAdapter.getName());
+            messageBean.setContent(message);
+            byte[] send = JSON.toJSONString(messageBean).getBytes();
+            if (TextUtils.isEmpty(mChatClientAddress)) {
+                //服务器发布公告功能，启用后在服务端会出现多条（=客户端个数）服务端的消息，故屏蔽，读者可以自己去实现
+                mChatService.writeToAllClient(send);
+//                Toast.makeText(getActivity(), "服务端发布公告功能未实现。请选择一个客户端进行聊天！", Toast.LENGTH_SHORT).show();
+                return;
+            } else {
+                mChatService.write(mChatClientAddress, send);
+            }
 
             // Reset out string buffer to zero and clear the edit text field
             mOutStringBuffer.setLength(0);
@@ -285,7 +320,7 @@ public class BluetoothChatFragment extends Fragment {
     }
 
     /**
-     * The Handler that gets information back from the BluetoothChatClientService
+     * The Handler that gets information back from the BluetoothChatServerService
      */
     private final Handler mHandler = new Handler() {
         @Override
@@ -296,7 +331,7 @@ public class BluetoothChatFragment extends Fragment {
                     switch (msg.arg1) {
                         case Constants.STATE_CONNECTED:
                             setStatus(getString(R.string.title_connected_to, mConnectedDeviceName));
-                            mConversationArrayAdapter.clear();
+                            //mConversationArrayAdapter.clear();
                             break;
                         case Constants.STATE_CONNECTING:
                             setStatus(R.string.title_connecting);
@@ -310,12 +345,11 @@ public class BluetoothChatFragment extends Fragment {
                 case Constants.MESSAGE_WRITE:
                     byte[] writeBuf = (byte[]) msg.obj;
                     // construct a string from the buffer
-                    String writeMessage = new String(writeBuf);
-                    MessageBean messageBean = new MessageBean();
-                    messageBean.setDeviceName("Me");
-                    messageBean.setDeviceAddress(getLocalBlueDeviceAddress());
-                    messageBean.setContent(writeMessage);
-                    mConversationArrayAdapter.add(messageBean);
+//                    String writeMessage = new String(writeBuf);
+//                    mConversationArrayAdapter.add("Me:  " + writeMessage);
+                    MessageBean messageBeanWrite = JSON.parseObject(new String(writeBuf), MessageBean.class);
+                    messageBeanWrite.setDeviceName("Me");
+                    mConversationArrayAdapter.add(messageBeanWrite);
                     break;
                 case Constants.MESSAGE_READ:
                     byte[] readBuf = (byte[]) msg.obj;
@@ -323,9 +357,6 @@ public class BluetoothChatFragment extends Fragment {
                     //String readMessage = new String(readBuf, 0, msg.arg1);
                     MessageBean messageBeanRead = JSON.parseObject(new String(readBuf, 0, msg.arg1), MessageBean.class);
                     mConversationArrayAdapter.add(messageBeanRead);
-                    if ("kill".equals(messageBeanRead.getContent())) {
-                        mChatService.stop();
-                    }
                     break;
                 case Constants.MESSAGE_DEVICE_NAME:
                     // save the connected device's name
@@ -345,20 +376,18 @@ public class BluetoothChatFragment extends Fragment {
         }
     };
 
+    private String getLocalBlueDeviceAddress() {
+        //Android 6.0以上使用getAddress()获取不到蓝牙地址，返回的是02:00:00:00:00:00
+        if (Build.VERSION.SDK_INT < 23) {
+            return mBluetoothAdapter.getAddress();
+        } else {
+            //Android 6.0之前的版本也可以使用该方法
+            return android.provider.Settings.Secure.getString(getContext().getContentResolver(), "bluetooth_address");
+        }
+    }
+
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         switch (requestCode) {
-            case REQUEST_CONNECT_DEVICE_SECURE:
-                // When DeviceListActivity returns with a device to connect
-                if (resultCode == Activity.RESULT_OK) {
-                    connectDevice(data, true);
-                }
-                break;
-            case REQUEST_CONNECT_DEVICE_INSECURE:
-                // When DeviceListActivity returns with a device to connect
-                if (resultCode == Activity.RESULT_OK) {
-                    connectDevice(data, false);
-                }
-                break;
             case REQUEST_ENABLE_BT:
                 // When the request to enable Bluetooth returns
                 if (resultCode == Activity.RESULT_OK) {
@@ -374,47 +403,6 @@ public class BluetoothChatFragment extends Fragment {
         }
     }
 
-    /**
-     * Establish connection with other device
-     *
-     * @param data   An {@link Intent} with {@link DeviceListActivity#EXTRA_DEVICE_ADDRESS} extra.
-     * @param secure Socket Security type - Secure (true) , Insecure (false)
-     */
-    private void connectDevice(Intent data, boolean secure) {
-        // Get the device MAC address
-        String address = data.getExtras()
-                .getString(DeviceListActivity.EXTRA_DEVICE_ADDRESS);
-        // Get the BluetoothDevice object
-        BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(address);
-        // Attempt to connect to the device
-        mChatService.connect(device, secure);
-    }
-
-    private String getLocalBlueDeviceAddress() {
-        //Android 6.0以上使用getAddress()获取不到蓝牙地址，返回的是02:00:00:00:00:00
-        if (Build.VERSION.SDK_INT < 23) {
-            return mBluetoothAdapter.getAddress();
-        } else {
-            //Android 6.0之前的版本也可以使用该方法
-            return android.provider.Settings.Secure.getString(getContext().getContentResolver(), "bluetooth_address");
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        if (requestCode == REQUEST_LOCATION_PERMISSION_CODE) {
-            if (grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(getActivity(), "定位权限被拒绝，请手动开启！", Toast.LENGTH_SHORT).show();
-
-                //打开系统的应用信息页面
-                Intent intent = new Intent();
-                intent.setAction(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                intent.setData(Uri.parse("package:" + this.getActivity().getPackageName()));
-                startActivity(intent);
-            }
-        }
-    }
-
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         inflater.inflate(R.menu.bluetooth_chat, menu);
@@ -422,28 +410,22 @@ public class BluetoothChatFragment extends Fragment {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (Build.VERSION.SDK_INT >= 23 && ContextCompat.checkSelfPermission(this.getActivity(), Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
-                    REQUEST_LOCATION_PERMISSION_CODE);
-            return false;
-        }
-
         switch (item.getItemId()) {
-            case R.id.secure_connect_scan: {
-                // Launch the DeviceListActivity to see devices and do scan
-                Intent serverIntent = new Intent(getActivity(), DeviceListActivity.class);
-                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_SECURE);
-                return true;
-            }
-            case R.id.insecure_connect_scan: {
-                // Launch the DeviceListActivity to see devices and do scan
-                Intent serverIntent = new Intent(getActivity(), DeviceListActivity.class);
-                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_INSECURE);
+            case R.id.discoverable: {
+                // Ensure this device is discoverable by others
+                ensureDiscoverable();
                 return true;
             }
         }
         return false;
     }
 
+    public void acceptClientMsg(ClientMessageEvent event) {
+        Log.e(TAG,"AcceptServerMsg");
+        if (event.getMessageRead() == Constants.MESSAGE_READ) {
+            MessageBean messageBeanRead = JSON.parseObject(new String(event.getNewBuffer(), 0, event.getLength()), MessageBean.class);
+            mConversationArrayAdapter.add(messageBeanRead);
+
+        }
+    }
 }
