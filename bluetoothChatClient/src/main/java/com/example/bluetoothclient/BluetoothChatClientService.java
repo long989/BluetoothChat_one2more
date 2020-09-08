@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.bluetoothchatclient;
+package com.example.bluetoothclient;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -26,6 +26,9 @@ import android.os.Message;
 import android.util.Log;
 
 import com.example.bluetoothchatcore.Constants;
+import com.example.event.ClientMessageEvent;
+
+import org.greenrobot.eventbus.EventBus;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -363,6 +366,7 @@ public class BluetoothChatClientService {
                     // Send the obtained bytes to the UI Activity
                     mHandler.obtainMessage(Constants.MESSAGE_READ, bytes, -1, buffer)
                             .sendToTarget();
+                    EventBus.getDefault().post(new ClientMessageEvent(Constants.MESSAGE_READ, bytes, -1, buffer));
                 } catch (IOException e) {
                     Log.e(TAG, "disconnected", e);
                     connectionLost();

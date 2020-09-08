@@ -1,21 +1,31 @@
 <resources>
-    <string name="app_name">BTChatClient</string>
+    <string name="app_name">客户端</string>
 
     <!--  DeviceListActivity -->
-    <string name="scanning">scanning for devices...</string>
-    <string name="select_device">select a device to connect</string>
-    <string name="none_paired">No devices have been paired</string>
-    <string name="none_found">No devices found</string>
-    <string name="title_paired_devices">Paired Devices</string>
-    <string name="title_other_devices">Other Available Devices</string>
-    <string name="button_scan">Scan for devices</string>
+    <string name="scanning">设备扫描中...</string>
+    <string name="select_device">选择一个要连接的设备</string>
+    <string name="none_paired">没有设备配对</string>
+    <string name="none_found">设备没有找到</string>
+    <string name="title_paired_devices">配对设备</string>
+    <string name="title_other_devices">其他可用设备</string>
+    <string name="button_scan">扫描设备</string>
 
     <!-- Options Menu -->
-    <string name="secure_connect">Connect a device - Secure</string>
-    <string name="insecure_connect">Connect a device - Insecure</string>
+    <string name="secure_connect">安全配对连接</string>
+    <string name="insecure_connect">不需要配对连接</string>
     
     <string name="intro_message">这个是客户端，需要与另外一台手机（服务端）配合使用，使用步骤：\n
     1、打开蓝牙\n
     2、点击右上角菜单扫描并连接到服务端(Secure方式需要先配对，Insecure则不需要)\n
     3、发送消息</string>
+
+
+
+
+    <string name="server_app_name">服务端</string>
+    <!-- Options Menu -->
+    <string name="discoverable">蓝牙可见</string>
+
+    <string name="blue_is_discoverable">蓝牙已处于可发现状态</string>
+    <string name="server_intro_message">这个是服务端，部分机型需要点击右上角菜单，客户端才能找到该蓝牙设备</string>
 </resources>
